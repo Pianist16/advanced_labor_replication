@@ -1,0 +1,140 @@
+1. merge age,educ,employed,marital,relateToHead,sex,student,wages by ih12 idrez12 (in some cases m:1, in some 1:1)
+
+2. keep only males => main.dta #merged file in 1. but with males only
+
+3. keep only males aged 15-30 => main_15_30.dta #merged file in 2. but with age 15-30
+drop if i301=9 # measurement errors
+replace i301=0 if i301==2 # and also for i302 i303 i304
+replace i302=0 if i302==2
+replace i303=0 if i303==2
+replace i304=0 if i304==2
+drop i303 # it has all 0-s
+gen employed=i301+i302+i304
+replace employed=1 if employed==2
+replace i203=0 if i203==2
+gen employed_student=3 if employed==1 & i203==1
+replace employed_student=2 if employed==1 & i203==0
+replace employed_student=1 if employed==0 & i203==1
+replace employed_student=0 if employed==0 & i203==0
+
+# keep only labor market participants (i.e. employed or jobless)
+drop if employed_student==1 # 160 clean students dropped =>main_15_30_employed
+it is used in the main equation as a dependent variable
+
+replace employed_student=1 if employed_student==2
+replace employed_student=1 if employed_student==3
+
+#keep only clean students
+keep if employed_student==1 =>main_15_30_students
+it is used in a selection equation as a dependent variable
+save
+
+4. ### opportunity cost calculation 
+
+open main_15_30_employed.dta
+regress employed_student age agesq
+outreg2 using oppcost_employed_age_regression.doc
+predict fitted
+rename fitted prob_of_empl_for_age
+
+regress i320s age agesq
+predict fitted
+rename fitted average_wage
+gen opport_cost_of_educ=prob_of_empl_for_age*average_wage
+save as oppor_cost_of_educ.dta
+
+keep age opport_cost_of_educ
+sort age
+duplicates drop
+
+5. ### ExpectedLifeEarnings calculation
+
+open main.dta
+keep only ages 31-65
+keep if age>30
+keep if age<66
+keep if i207>6
+save as main_31_65_univ
+
+regress i320s age agesq
+outreg2 using ELE_wage_age_univ_regression.doc
+predict fitted
+rename fitted wage_hat_univ
+save
+
+sort age
+keep age wage_hat_univ
+duplicates drop
+save as b_univ
+
+open main.dta
+keep only ages 31-65
+keep if age>30
+keep if age<66
+keep if i207<7
+keep if i207>4
+save as main_31_65_highschool
+
+regress i320s age agesq
+outreg2 using ELE_wage_age_hs_regression.doc
+predict fitted
+rename fitted wage_hat_hs
+save
+
+sort age
+keep age wage_hat_hs
+duplicates drop
+save as b_hs
+
+### import b_hs and b_univ into R for further work
+
+### importing files from R int Stata
+
+drop v1
+rename v2 age
+rename v3 ELE_hs (ELE_univ)
+
+6. Adding ELE_hs and ELE_univ and oppor_cost_of_educ_by_age into the main data
+
+open main_15_30_students
+replace employed_student=0
+save
+open main_15_30_employed
+append using main_15_30_students.dta
+save as finaldata
+
+merge m:1 age using ELE_hs.dta
+drop _merge
+merge m:1 age using ELE_univ.dta
+drop _merge
+merge m:1 age using oppor_cost_of_educ_by_age.dta
+drop _merge
+
+sort ih12
+
+save
+
+merge m:1 ih12 using rural_urban.dta
+keep if _merge==3
+drop _merge
+merge m:1 ih12 using tot_assets.dta
+keep if _merge==3
+drop _merge
+merge m:1 ih12 using tot_income.dta
+keep if _merge==3
+drop _merge
+
+save as FINAL.dta
+
+drop if h108 ==5
+replace h108=1 if h108==3
+replace h108=0 if h108==2
+replace h108=0 if h108==4
+replace h108=0 if h108==6
+
+rename and drop to get:
+FINAL1.dta
+
+heckprob Employed Age Age_squared Marital_status Education Student Urban Total_assets Total_income, select(Student=Age Age_squared Marital_status Education Student Urban Total_assets Total_income ELE_hs ELE_univ OCE) nolog
+
+heckprob employed_student age agesq h104 h108 i207 urban tot_assets total_income, select(i203=age agesq h104 h108 i207 urban tot_assets total_income ELE_hs ELE_univ opport_cost_of_educ) nolog
